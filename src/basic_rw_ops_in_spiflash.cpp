@@ -1,18 +1,9 @@
 #include <Arduino.h>
 #include <spi_flash.h>
 
-#define FLASH_ADDR 0x300000   // Safe flash address (4KB aligned)
+#define FLASH_ADDR 0x300000
 
-char userInput[64];
-
-// Clear UART RX buffer
-void clearSerialBuffer()
-{
-  while (Serial.available())
-  {
-    Serial.read();
-  }
-}
+String userInput = "";
 
 void setup()
 {
@@ -21,73 +12,77 @@ void setup()
 
   Serial.println("\nESP8266 Flash Read / Write Example");
   Serial.println("----------------------------------");
-
-  clearSerialBuffer();
-
-  Serial.println("Enter your name and press ENTER:");
+  Serial.println("Enter your name then press ENTER:");
 }
 
 void loop()
 {
-  if (Serial.available())
+  while (Serial.available())
   {
-    int len = Serial.readBytesUntil('\n', userInput, sizeof(userInput) - 1);
+    char c = Serial.read();
 
-    userInput[len] = '\0';
-
-    // Remove carriage return if present
-    if (len > 0 && userInput[len - 1] == '\r')
+    // Detect ENTER (works for \n, \r, or \r\n)
+    if (c == '\n' || c == '\r')
     {
-      userInput[len - 1] = '\0';
+      if (userInput.length() == 0) return;
+
+      userInput.trim();
+
+      Serial.println();
+      Serial.print("User entered: ");
+      Serial.println(userInput);
+
+      uint32_t sector = FLASH_ADDR / SPI_FLASH_SEC_SIZE;
+
+      Serial.println("\nErasing flash sector...");
+
+      if (spi_flash_erase_sector(sector) != SPI_FLASH_RESULT_OK)
+      {
+        Serial.println("Flash erase failed!");
+        userInput = "";
+        return;
+      }
+
+      Serial.println("Sector erased");
+
+      uint8_t writeBuffer[64] = {0};
+      userInput.toCharArray((char*)writeBuffer, sizeof(writeBuffer));
+
+      uint32_t dataSize = userInput.length() + 1;
+
+      Serial.println("Writing data to flash...");
+
+      if (spi_flash_write(FLASH_ADDR, (uint32_t*)writeBuffer, dataSize) != SPI_FLASH_RESULT_OK)
+      {
+        Serial.println("Flash write failed!");
+        userInput = "";
+        return;
+      }
+
+      Serial.println("Write successful");
+
+      uint8_t readBuffer[64] = {0};
+
+      Serial.println("Reading from flash...");
+
+      if (spi_flash_read(FLASH_ADDR, (uint32_t*)readBuffer, sizeof(readBuffer)) != SPI_FLASH_RESULT_OK)
+      {
+        Serial.println("Flash read failed!");
+        userInput = "";
+        return;
+      }
+
+      Serial.print("\nRead from flash: ");
+      Serial.println((char*)readBuffer);
+
+      Serial.println("\nEnter another name then press ENTER:");
+
+      userInput = "";
     }
-
-    Serial.print("\nUser entered: ");
-    Serial.println(userInput);
-
-    uint32_t sector = FLASH_ADDR / SPI_FLASH_SEC_SIZE;
-
-    // -------- ERASE FLASH SECTOR --------
-    Serial.println("\nErasing flash sector...");
-
-    if (spi_flash_erase_sector(sector) != SPI_FLASH_RESULT_OK)
+    else
     {
-      Serial.println("Flash erase failed!");
-      return;
+      userInput += c;
+      Serial.print(c); // echo typed characters
     }
-
-    Serial.println("Sector erased");
-
-    // -------- WRITE DATA --------
-    uint8_t writeBuffer[64] = {0};
-
-    strcpy((char *)writeBuffer, userInput);
-
-    Serial.println("Writing data to flash...");
-
-    if (spi_flash_write(FLASH_ADDR, (uint32_t *)writeBuffer, strlen(userInput) + 1) != SPI_FLASH_RESULT_OK)
-    {
-      Serial.println("Flash write failed!");
-      return;
-    }
-
-    Serial.println("Write successful");
-
-    // -------- READ DATA --------
-    uint8_t readBuffer[64] = {0};
-
-    Serial.println("Reading from flash...");
-
-    if (spi_flash_read(FLASH_ADDR, (uint32_t *)readBuffer, sizeof(readBuffer)) != SPI_FLASH_RESULT_OK)
-    {
-      Serial.println("Flash read failed!");
-      return;
-    }
-
-    Serial.print("\nRead from flash: ");
-    Serial.println((char *)readBuffer);
-
-    Serial.println("\nEnter another name:");
-
-    clearSerialBuffer();
   }
 }
